@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.1 (2026-11-06)
+
+### Fixes
+
+- keep the agent on the invoked path, not the resolved Cellar path
+
 ## v0.2.0 (2026-11-05)
 
 ### Features

@@ -1,7 +1,7 @@
 import Foundation
 import SiestaCore
 
-let siestaVersion = "0.2.0"
+let siestaVersion = "0.2.1"
 
 /// What launchd runs. By hand, --dry-run observes and logs but never stops anything and never touches the clocks.
 struct CheckCommand: Command {
