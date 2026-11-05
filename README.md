@@ -57,8 +57,8 @@ live         containers 0, clients 0, ssh 0
 idle         no, or not observed yet
 last stop    never, 0 total
 agent        not installed (run `siesta install`)
-config       /Users/marian/.config/siesta/config.json (defaults)
-log          /Users/marian/Library/Logs/siesta/siesta.log
+config       ~/.config/siesta/config.json (defaults)
+log          ~/Library/Logs/siesta/siesta.log
 ```
 
 A probe that fails, for example `docker` not answering, shows as `?` and the check reports the profile as unknown rather than idle; nothing is ever stopped on an incomplete observation. The idle clock is tied to Lima's boot session, so a profile you stop and start yourself between two checks begins from zero.
