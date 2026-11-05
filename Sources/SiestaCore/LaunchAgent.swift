@@ -1,12 +1,23 @@
 import Foundation
 
-/// Writes and manages the launchd agent. The agent runs `siesta check` on an interval; nothing stays resident.
+/// The launchd agent that runs `siesta check` on an interval. Nothing stays resident between runs.
 /// Conventions: reverse-DNS label, plist in ~/Library/LaunchAgents, absolute program path, explicit PATH,
-/// Background process type with low CPU and I/O priority, stdout/stderr under ~/Library/Logs, gui domain, no sudo.
+/// Background process type with low CPU and I/O priority, output under ~/Library/Logs, gui domain, no sudo.
 public struct LaunchAgent: Sendable {
+    public struct Status: Sendable, Equatable {
+        public var loaded: Bool
+        public var state: String
+        public var lastExit: String
+        public var runs: String
+        /// Switched off in System Settings > General > Login Items & Extensions, or by `launchctl disable`.
+        public var disabled: Bool
+    }
+
     public let paths: Paths
-    public let shell: Shell
-    public init(paths: Paths, shell: Shell) { self.paths = paths; self.shell = shell }
+    public let runner: CommandRunner
+    public let binPaths: [String]
+
+    public init(paths: Paths, runner: CommandRunner, binPaths: [String]) { self.paths = paths; self.runner = runner; self.binPaths = binPaths }
 
     public var domain: String { "gui/\(getuid())" }
     public var target: String { "\(domain)/\(Paths.label)" }
@@ -21,52 +32,60 @@ public struct LaunchAgent: Sendable {
             "Nice": 10,
             "LowPriorityIO": true,
             "LowPriorityBackgroundIO": true,
-            "StandardOutPath": paths.launchdOut.path,
-            "StandardErrorPath": paths.launchdOut.path,
-            "EnvironmentVariables": ["PATH": shell.binPaths.joined(separator: ":"), "HOME": paths.home.path],
+            "StandardOutPath": paths.launchdLog.path,
+            "StandardErrorPath": paths.launchdLog.path,
+            "EnvironmentVariables": ["PATH": binPaths.joined(separator: ":"), "HOME": paths.home.path],
         ]
     }
 
     public func writePlist(config: Config) throws {
         let data = try PropertyListSerialization.data(fromPropertyList: plist(config: config), format: .xml, options: 0)
-        try FileManager.default.createDirectory(at: paths.agentPlist.deletingLastPathComponent(), withIntermediateDirectories: true)
         try data.write(to: paths.agentPlist, options: .atomic)
     }
 
-    public func bootstrap() throws {
-        _ = shell.run("/bin/launchctl", ["bootout", target], timeout: 20)   // ignore: not loaded yet is fine
-        let r = shell.run("/bin/launchctl", ["bootstrap", domain, paths.agentPlist.path], timeout: 20)
-        guard r.ok else { throw SiestaError.command("launchctl bootstrap", r) }
-        _ = shell.run("/bin/launchctl", ["enable", target], timeout: 20)
+    /// Loads the agent, replacing any earlier copy. `enable` undoes a previous `launchctl disable`.
+    public func load() throws {
+        unload()
+        let result = runner.run("/bin/launchctl", ["bootstrap", domain, paths.agentPlist.path], timeout: 20)
+        guard result.ok else { throw SiestaError.command("launchctl bootstrap", result) }
+        _ = runner.run("/bin/launchctl", ["enable", target], timeout: 20)
     }
 
-    public func bootout() {
-        _ = shell.run("/bin/launchctl", ["bootout", target], timeout: 20)
-    }
+    public func unload() { _ = runner.run("/bin/launchctl", ["bootout", target], timeout: 20) }
 
     public func kickstart() throws {
-        let r = shell.run("/bin/launchctl", ["kickstart", target], timeout: 20)
-        guard r.ok else { throw SiestaError.command("launchctl kickstart", r) }
-    }
-
-    public struct Status: Sendable {
-        public var loaded: Bool
-        public var state: String
-        public var lastExit: String
-        public var runs: String
-        public var interval: String
+        let result = runner.run("/bin/launchctl", ["kickstart", target], timeout: 20)
+        guard result.ok else { throw SiestaError.command("launchctl kickstart", result) }
     }
 
     public func status() -> Status {
-        let r = shell.run("/bin/launchctl", ["print", target], timeout: 20)
-        guard r.ok else { return Status(loaded: false, state: "not loaded", lastExit: "-", runs: "-", interval: "-") }
-        func grab(_ key: String) -> String {
-            for line in r.stdout.split(separator: "\n") {
-                let t = line.trimmingCharacters(in: .whitespaces)
-                if t.hasPrefix(key + " = ") { return String(t.dropFirst(key.count + 3)) }
-            }
-            return "-"
-        }
-        return Status(loaded: true, state: grab("state"), lastExit: grab("last exit code"), runs: grab("runs"), interval: grab("run interval"))
+        let result = runner.run("/bin/launchctl", ["print", target], timeout: 20)
+        let disabled = isDisabled()
+        guard result.ok else { return Status(loaded: false, state: "not loaded", lastExit: "-", runs: "-", disabled: disabled) }
+        let fields = LaunchctlPrint(result.stdout)
+        return Status(loaded: true, state: fields["state"], lastExit: fields["last exit code"], runs: fields["runs"], disabled: disabled)
     }
+
+    private func isDisabled() -> Bool {
+        let result = runner.run("/bin/launchctl", ["print-disabled", domain], timeout: 20)
+        return result.lines.contains { $0.contains("\"\(Paths.label)\"") && ($0.contains("disabled") || $0.contains("true")) }
+    }
+}
+
+/// Reads `key = value` lines out of `launchctl print` output.
+private struct LaunchctlPrint {
+    private let fields: [String: String]
+
+    init(_ text: String) {
+        var parsed: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard let range = trimmed.range(of: " = ") else { continue }
+            let key = String(trimmed[..<range.lowerBound])
+            if parsed[key] == nil { parsed[key] = String(trimmed[range.upperBound...]) }
+        }
+        fields = parsed
+    }
+
+    subscript(key: String) -> String { fields[key] ?? "-" }
 }

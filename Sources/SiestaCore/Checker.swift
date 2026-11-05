@@ -2,19 +2,9 @@ import Foundation
 import Darwin
 
 /// One pass: observe every watched profile, decide, stop what has been idle long enough, persist state.
-/// Holds an exclusive lock for the duration so two launchd runs can never overlap.
+/// Holds an exclusive file lock for the duration so two launchd runs can never overlap.
 public struct Checker: Sendable {
-    public let paths: Paths
-    public let config: Config
-    public let colima: Colima
-    public let log: Log
-    public var dryRun: Bool
-
-    public init(paths: Paths, config: Config, colima: Colima, log: Log, dryRun: Bool = false) {
-        self.paths = paths; self.config = config; self.colima = colima; self.log = log; self.dryRun = dryRun
-    }
-
-    public struct Outcome: Sendable {
+    public struct Outcome: Sendable, Equatable {
         public var profile: String
         public var facts: Facts
         public var decision: Decision
@@ -22,71 +12,97 @@ public struct Checker: Sendable {
         public var error: String?
     }
 
+    public let config: Config
+    public let backend: VMBackend
+    public let store: StateStore
+    public let log: Logging
+    public let lockFile: URL?
+    public let dryRun: Bool
+
+    public init(config: Config, backend: VMBackend, store: StateStore, log: Logging, lockFile: URL?, dryRun: Bool = false) {
+        self.config = config; self.backend = backend; self.store = store; self.log = log; self.lockFile = lockFile; self.dryRun = dryRun
+    }
+
     public func run(now: Date = Date()) throws -> [Outcome] {
-        try paths.ensureDirectories()
-        let fd = open(paths.lockFile.path, O_CREAT | O_RDWR, 0o644)
-        guard fd >= 0 else { throw SiestaError.message("cannot open lock file \(paths.lockFile.path)") }
-        defer { close(fd) }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+        let lock = try lockFile.map(FileLock.init(url:))
+        if let lock, !lock.acquired {
             log.warn("another check is running; skipping")
             return []
         }
-        defer { flock(fd, LOCK_UN) }
-
-        var state = State.load(from: paths.stateFile)
+        var state = store.load()
         state.lastCheck = now
-        defer { try? state.save(to: paths.stateFile) }
+        defer { if !dryRun { try? store.save(state) } }   // a dry run observes and logs but leaves the clocks alone
 
-        if state.isPaused(at: now) {
-            log.info("paused until \(Log.stamp(state.pausedUntil!)); nothing checked")
+        if let until = state.pausedUntil, state.isPaused(at: now) {
+            log.info("paused until \(Format.timestamp(until)); nothing checked")
             return []
         }
-
-        let all = try colima.list()
-        let watched = config.profiles.isEmpty ? all : all.filter { config.profiles.contains($0.name) }
+        let watched = try watchedProfiles()
         if watched.isEmpty { log.info("no colima profiles to watch") }
-
-        var outcomes: [Outcome] = []
-        for p in watched {
-            var ps = state.profiles[p.name] ?? ProfileState()
-            var facts = Facts(running: p.running)
-            if p.running {
-                facts.containers = colima.runningContainers(profile: p.name) ?? 0
-                facts.dockerClients = config.dockerClientsMeanBusy ? colima.dockerClients(profile: p.name) : 0
-                facts.sshSessions = config.sshSessionsMeanBusy ? colima.sshSessions(profile: p.name) : 0
-                if config.guestLoadThreshold != nil { facts.guestLoad = colima.guestLoad(profile: p.name) }
-            }
-            let (decision, idleSince) = Policy.decide(facts: facts, config: config, idleSince: ps.idleSince, now: now)
-            ps.idleSince = idleSince
-            var stopped = false
-            var err: String?
-            switch decision {
-            case .stop(let idleFor):
-                if dryRun {
-                    log.info("[\(p.name)] would stop (idle \(Int(idleFor / 60)) min) — dry run")
-                } else {
-                    log.info("[\(p.name)] stopping after \(Int(idleFor / 60)) idle min")
-                    let r = colima.stop(profile: p.name, timeout: TimeInterval(config.stopTimeoutSeconds))
-                    if r.ok {
-                        stopped = true
-                        ps.lastStop = now; ps.stops += 1; ps.idleSince = nil
-                        log.info("[\(p.name)] stopped")
-                    } else {
-                        err = SiestaError.command("colima stop", r).description
-                        log.error("[\(p.name)] \(err!)")
-                    }
-                }
-            case .notRunning:
-                break
-            default:
-                log.info("[\(p.name)] \(decision.summary) (containers \(facts.containers), clients \(facts.dockerClients), ssh \(facts.sshSessions))")
-            }
-            ps.lastObservation = Observation(at: now, running: facts.running, containers: facts.containers,
-                                             dockerClients: facts.dockerClients, sshSessions: facts.sshSessions,
-                                             guestLoad: facts.guestLoad, verdict: decision.summary)
-            state.profiles[p.name] = ps
-            outcomes.append(Outcome(profile: p.name, facts: facts, decision: decision, stopped: stopped, error: err))
+        return watched.map { profile in
+            var profileState = state.profiles[profile.name] ?? ProfileState()
+            let outcome = check(profile, state: &profileState, now: now)
+            state.profiles[profile.name] = profileState
+            return outcome
         }
-        return outcomes
+    }
+
+    private func watchedProfiles() throws -> [ProfileInfo] {
+        let all = try backend.profiles()
+        return config.profiles.isEmpty ? all : all.filter { config.profiles.contains($0.name) }
+    }
+
+    private func check(_ profile: ProfileInfo, state: inout ProfileState, now: Date) -> Outcome {
+        let tag = "[\(profile.name)]"
+        if profile.running, state.adopt(bootSession: backend.bootSession(of: profile.name)) {
+            log.info("\(tag) restarted since last check; idle clock reset")
+        }
+        let facts = backend.observe(profile, probes: config.probes)
+        let (decision, idleSince) = Policy(config: config).decide(facts: facts, idleSince: state.idleSince, now: now)
+        state.idleSince = idleSince
+        var outcome = Outcome(profile: profile.name, facts: facts, decision: decision, stopped: false, error: nil)
+
+        switch decision {
+        case .notRunning:
+            break
+        case .unknown:
+            log.warn("\(tag) \(decision.summary); not touching it")
+        case .busy, .idle:
+            log.info("\(tag) \(decision.summary) (\(facts.counts))")
+        case .stop(let idleFor):
+            if dryRun {
+                log.info("\(tag) would stop after \(Format.minutes(idleFor)) idle min (dry run)")
+            } else {
+                log.info("\(tag) \(decision.summary)")
+                do {
+                    try backend.stop(profile.name, timeout: config.stopTimeout)
+                    state.recordStop(at: now)
+                    outcome.stopped = true
+                    log.info("\(tag) stopped")
+                } catch {
+                    outcome.error = "\(error)"
+                    log.error("\(tag) \(error)")
+                }
+            }
+        }
+        state.lastObservation = Observation(at: now, facts: facts, verdict: decision.summary)
+        return outcome
+    }
+}
+
+/// An advisory, non-blocking file lock released when the value goes away.
+final class FileLock {
+    let acquired: Bool
+    private let descriptor: Int32
+
+    init(url: URL) throws {
+        descriptor = open(url.path, O_CREAT | O_RDWR, 0o644)
+        guard descriptor >= 0 else { throw SiestaError.message("cannot open lock file \(url.path)") }
+        acquired = flock(descriptor, LOCK_EX | LOCK_NB) == 0
+    }
+
+    deinit {
+        if acquired { flock(descriptor, LOCK_UN) }
+        close(descriptor)
     }
 }
