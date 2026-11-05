@@ -1,7 +1,7 @@
 import Foundation
 import SiestaCore
 
-let siestaVersion = "0.2.1"
+let siestaVersion = "0.3.0"
 
 /// What launchd runs. By hand, --dry-run observes and logs but never stops anything and never touches the clocks;
 /// --force stops every profile that is idle right now without waiting out the hour. `siesta --force` is the same.

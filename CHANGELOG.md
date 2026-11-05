@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.0 (2026-11-06)
+
+### Features
+
+- add --force to stop every profile that is idle right now
+
+### Fixes
+
+- check the program the plist names instead of ~/.local/bin
+
 ## v0.2.1 (2026-11-06)
 
 ### Fixes
