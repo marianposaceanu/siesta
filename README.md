@@ -49,16 +49,21 @@ siesta doctor                   tools, plist, agent
 siesta uninstall [--purge]      unload the agent; --purge also removes binary, config, state, logs
 ```
 
-Example status while a profile is idle:
+Example status before the agent is installed, with the profile running and nothing using it:
 
 ```
 profile      pr-qa  running  6.0 GiB, 2 cpus
-live         0 container(s), 0 docker client(s), 0 ssh session(s)
-idle         since 2026-11-05 21:32:00, stop after 59 more min
-last check   2026-11-05 21:32:00 (0 s ago): idle, 60 min until stop
+live         containers 0, clients 0, ssh 0
+idle         no, or not observed yet
 last stop    never, 0 total
-agent        loaded, running, every 3600 s, last exit 0, runs 3
+agent        not installed (run `siesta install`)
+config       /Users/marian/.config/siesta/config.json (defaults)
+log          /Users/marian/Library/Logs/siesta/siesta.log
 ```
+
+A probe that fails, for example `docker` not answering, shows as `?` and the check reports the profile as unknown rather than idle; nothing is ever stopped on an incomplete observation. The idle clock is tied to Lima's boot session, so a profile you stop and start yourself between two checks begins from zero.
+
+The agent also appears in System Settings > General > Login Items & Extensions under "Allow in the Background". If it is switched off there, `siesta status` says so; `launchctl enable` cannot override that switch, only the Settings pane can.
 
 ## Config
 
@@ -83,12 +88,30 @@ An empty `profiles` list means every profile `colima list` reports. Changing `ch
 ## Layout
 
 ```
-Sources/SiestaCore   Paths, Config, State, Policy (pure decision), Shell (bounded subprocess), Colima (probes), Checker, LaunchAgent, Log
-Sources/siesta       the CLI
-Sources/selftest     checks for the pure parts; runs on a bare Command Line Tools install, which has no XCTest and no swift-testing macros
+Sources/SiestaCore
+  Paths           every file siesta touches, macOS conventions
+  Config          user settings, with the probe switches
+  State           persisted idle clocks; StateStore protocol, FileStateStore
+  Policy          the pure decision: Facts + Config + clock -> Decision
+  Backend         VMBackend protocol, ProfileInfo, errors
+  ColimaBackend   the probes: colima list, docker ps, lsof, ps, ha.pid, colima stop
+  Checker         one pass over the watched profiles, under a file lock
+  LaunchAgent     plist, bootstrap, bootout, kickstart, status
+  Shell           CommandRunner protocol; bounded subprocess with a watchdog
+  Log             Logging protocol; FileLogger with rotation and the unified log, MemoryLogger
+  JSONFile        one encoder and decoder for every JSON file
+  Format          bytes, timestamps, durations
+Sources/siesta
+  main            builds the Context, dispatches by name, maps errors to exit codes
+  Command         the Command protocol and the registry
+  Commands        one small type per subcommand
+  Context         what every command gets
+  Arguments       flags, options and positionals, no dependency
+Sources/selftest  drives Policy, Checker (against a fake backend and an in-memory store), State, Config, Format, LaunchAgent and Shell;
+                  runs on a bare Command Line Tools install, which has neither XCTest nor the swift-testing macros
 ```
 
-Swift 6, strict concurrency, no dependencies. Built with Apple Swift 6.4 on macOS 27.2.
+Swift 6 with strict concurrency, no dependencies. Built with Apple Swift 6.4 on macOS 27.2.
 
 ## What it does not do
 
