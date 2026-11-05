@@ -4,6 +4,10 @@ Stops Colima VMs that nobody is using. Nothing stays resident: launchd runs `sie
 
 ## Why
 
+The measurements and the reasoning are written up in
+[An idle Colima VM keeps 5 GB of a Mac's memory](https://ark.marianposaceanu.com/idle-colima-vm-memory-macos),
+with a short technical record in [docs/why-stopping.md](docs/why-stopping.md). In one paragraph:
+
 A Colima guest keeps every page it has ever touched. Linux fills its memory with file cache from image pulls and builds, and macOS then carries that as compressed and swapped memory for as long as the VM runs. A 6 GiB profile with no containers running held 5.1 GB out of RAM on a 16 GB MacBook Air. Lima attaches a virtio balloon to the guest but never resizes it, so there is no way to hand that memory back while the VM runs. Stopping it is the only lever, and `colima start` brings it back in about twenty seconds.
 
 ## What counts as idle
