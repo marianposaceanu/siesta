@@ -10,7 +10,8 @@ struct Arguments {
 
     init(_ argv: [String]) {
         var words = argv[...]
-        command = words.popFirst() ?? "help"
+        // `siesta --force` and `siesta --dry-run` are shorthand for the check command.
+        command = words.first.map { $0.hasPrefix("-") } == true ? "check" : (words.popFirst() ?? "help")
         var positional: [String] = [], flags = Set<String>(), options: [String: String] = [:]
         while let word = words.popFirst() {
             if Arguments.valued.contains(word), let value = words.popFirst() { options[word] = value }

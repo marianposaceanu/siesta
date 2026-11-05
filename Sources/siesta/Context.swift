@@ -23,8 +23,8 @@ struct Context {
 
     func logger(echo: Bool) -> FileLogger { FileLogger(file: paths.logFile, echo: echo) }
 
-    func checker(dryRun: Bool, echo: Bool) -> Checker {
-        Checker(config: config, backend: backend, store: store, log: logger(echo: echo), lockFile: paths.lockFile, dryRun: dryRun)
+    func checker(dryRun: Bool, force: Bool, echo: Bool) -> Checker {
+        Checker(config: config, backend: backend, store: store, log: logger(echo: echo), lockFile: paths.lockFile, dryRun: dryRun, force: force)
     }
 
     /// The profiles this install watches, per the config.

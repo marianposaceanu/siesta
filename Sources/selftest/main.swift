@@ -88,7 +88,7 @@ do {
     suite.check("stop is recorded and the clock cleared", store.state.profiles["pr-qa"]?.stops == 1 && store.state.profiles["pr-qa"]?.lastStop == at(110) && store.state.profiles["pr-qa"]?.idleSince == nil)
     outcomes = try checker.run(now: at(120))
     suite.check("a stopped profile is reported not running", outcomes.first?.decision == .notRunning)
-    suite.check("log carries the story", log.lines.contains { $0.hasPrefix("INFO [pr-qa] stopping after 60 idle min") } && log.lines.contains("INFO [pr-qa] stopped"))
+    suite.check("log carries the story", log.lines.contains("INFO [pr-qa] stopping (after 60 idle min)") && log.lines.contains("INFO [pr-qa] stopped"))
 }
 do {
     let backend = FakeBackend(), store = MemoryStateStore()
@@ -123,6 +123,18 @@ do {
     store.state.profiles["pr-qa"] = { var p = ProfileState(); p.idleSince = t0; p.bootSession = "boot-1"; return p }()
     let outcomes = try Checker(config: cfg, backend: backend, store: store, log: MemoryLogger(), lockFile: nil).run(now: at(60))
     suite.check("a refused stop is reported and the clock kept", outcomes.first?.error == "colima stop refused" && store.state.profiles["pr-qa"]?.idleSince == t0)
+}
+do {
+    let backend = FakeBackend(), store = MemoryStateStore()
+    let forced = Checker(config: cfg, backend: backend, store: store, log: MemoryLogger(), lockFile: nil, force: true)
+    let outcomes = try forced.run(now: t0)
+    suite.check("force stops a profile that is idle right now", outcomes.first?.stopped == true && backend.stopped == ["pr-qa"])
+    let busyBackend = FakeBackend(); busyBackend.facts = Facts(running: true, containers: 1)
+    let left = try Checker(config: cfg, backend: busyBackend, store: MemoryStateStore(), log: MemoryLogger(), lockFile: nil, force: true).run(now: t0)
+    suite.check("force never stops a busy profile", left.first?.decision == .busy(reasons: ["1 container(s) running"]) && busyBackend.stopped.isEmpty)
+    let dryBackend = FakeBackend()
+    let dry = try Checker(config: cfg, backend: dryBackend, store: MemoryStateStore(), log: MemoryLogger(), lockFile: nil, dryRun: true, force: true).run(now: t0)
+    suite.check("force with dry run reports and stops nothing", dry.first?.stopped == false && dryBackend.stopped.isEmpty)
 }
 do {
     let store = MemoryStateStore()

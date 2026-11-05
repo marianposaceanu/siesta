@@ -18,9 +18,18 @@ public struct Checker: Sendable {
     public let log: Logging
     public let lockFile: URL?
     public let dryRun: Bool
+    /// Stop every profile that is idle right now instead of waiting out the idle interval. Busy profiles are still left alone.
+    public let force: Bool
 
-    public init(config: Config, backend: VMBackend, store: StateStore, log: Logging, lockFile: URL?, dryRun: Bool = false) {
-        self.config = config; self.backend = backend; self.store = store; self.log = log; self.lockFile = lockFile; self.dryRun = dryRun
+    public init(config: Config, backend: VMBackend, store: StateStore, log: Logging, lockFile: URL?, dryRun: Bool = false, force: Bool = false) {
+        self.config = config; self.backend = backend; self.store = store; self.log = log; self.lockFile = lockFile
+        self.dryRun = dryRun; self.force = force
+    }
+
+    private var policy: Policy {
+        var effective = config
+        if force { effective.idleMinutes = 0 }
+        return Policy(config: effective)
     }
 
     public func run(now: Date = Date()) throws -> [Outcome] {
@@ -58,7 +67,7 @@ public struct Checker: Sendable {
             log.info("\(tag) restarted since last check; idle clock reset")
         }
         let facts = backend.observe(profile, probes: config.probes)
-        let (decision, idleSince) = Policy(config: config).decide(facts: facts, idleSince: state.idleSince, now: now)
+        let (decision, idleSince) = policy.decide(facts: facts, idleSince: state.idleSince, now: now)
         state.idleSince = idleSince
         var outcome = Outcome(profile: profile.name, facts: facts, decision: decision, stopped: false, error: nil)
 
@@ -70,10 +79,11 @@ public struct Checker: Sendable {
         case .busy, .idle:
             log.info("\(tag) \(decision.summary) (\(facts.counts))")
         case .stop(let idleFor):
+            let reason = force ? "forced, idle now" : "after \(Format.minutes(idleFor)) idle min"
             if dryRun {
-                log.info("\(tag) would stop after \(Format.minutes(idleFor)) idle min (dry run)")
+                log.info("\(tag) would stop (\(reason), dry run)")
             } else {
-                log.info("\(tag) \(decision.summary)")
+                log.info("\(tag) stopping (\(reason))")
                 do {
                     try backend.stop(profile.name, timeout: config.stopTimeout)
                     state.recordStop(at: now)

@@ -19,6 +19,8 @@ A running profile is busy if any of these hold, each one switchable in the confi
 - an interactive `colima ssh` session is open
 - optionally, the guest's 1-minute load average is above a threshold (one ssh round trip per check, off by default)
 
+`siesta --force` (or `siesta check --force`) skips the waiting and stops every profile that is idle at that moment; it still refuses to stop a profile with containers, clients or ssh sessions, which is what separates it from `siesta stop`.
+
 Otherwise it is idle. The first idle observation starts a clock; when a later check finds it still idle and the clock has passed `idleMinutes`, the profile is stopped. Any busy observation resets the clock. With the defaults, one check an hour and sixty idle minutes, a profile stops after one to two hours of real idleness.
 
 ## Install
@@ -53,6 +55,7 @@ The agent follows the usual rules for a user agent on macOS: reverse-DNS label, 
 siesta status                   profiles, live counts, idle clock, agent state
 siesta logs [-n N] [-f]         tail the log
 siesta check [--dry-run] [-v]   one pass by hand; --dry-run never stops anything
+siesta --force                  stop every profile that is idle right now; busy ones are left alone
 siesta stop [profile ...]       stop now
 siesta pause 2h | 45m | off     hold off automatic stops, for a long QA session
 siesta run-now                  ask launchd to run a check immediately
