@@ -3,17 +3,18 @@ import SiestaCore
 
 let siestaVersion = "0.2.1"
 
-/// What launchd runs. By hand, --dry-run observes and logs but never stops anything and never touches the clocks.
+/// What launchd runs. By hand, --dry-run observes and logs but never stops anything and never touches the clocks;
+/// --force stops every profile that is idle right now without waiting out the hour. `siesta --force` is the same.
 struct CheckCommand: Command {
     static let name = "check"
-    static let usage = "check [--dry-run] [-v]"
-    static let summary = "observe, decide, stop what has been idle long enough"
+    static let usage = "check [--force] [--dry-run] [-v]"
+    static let summary = "observe, decide, stop what has been idle long enough; --force stops what is idle now"
 
     func run(_ context: Context, _ args: Arguments) throws {
         try context.paths.ensureDirectories()
-        let dryRun = args.has("--dry-run"), verbose = args.has("-v", "--verbose")
-        let outcomes = try context.checker(dryRun: dryRun, echo: dryRun || verbose).run()
-        guard dryRun || verbose else { return }
+        let dryRun = args.has("--dry-run"), force = args.has("--force", "-f"), verbose = args.has("-v", "--verbose")
+        let outcomes = try context.checker(dryRun: dryRun, force: force, echo: dryRun || verbose || force).run()
+        guard dryRun || verbose || force else { return }
         for outcome in outcomes {
             let suffix = outcome.stopped ? " [stopped]" : outcome.error.map { " error: \($0)" } ?? ""
             context.output.line("\(outcome.profile): \(outcome.decision.summary)\(suffix)")
@@ -231,7 +232,9 @@ struct DoctorCommand: Command {
             out.row(present ? "ok" : "--", present ? "\(what) \(url.path)" : missing)
         }
         report(paths.agentPlist, "plist", missing: "plist not written")
-        report(paths.installedBinary, "binary", missing: "binary not installed")
+        if let program = agentProgram(paths.agentPlist) {
+            report(URL(fileURLWithPath: program), "agent binary", missing: "agent binary \(program) is missing; run `siesta install` again")
+        }
         let agent = context.agent.status()
         out.row(agent.loaded ? "ok" : "--", agent.loaded ? "agent loaded, \(agent.state)" : "agent not loaded")
         do {
@@ -240,6 +243,14 @@ struct DoctorCommand: Command {
         } catch { out.row("FAIL", "colima list: \(error)"); healthy = false }
         if !healthy { throw CommandFailure("doctor found problems") }
     }
+}
+
+/// The program path the loaded plist names, so the doctor checks what launchd will actually run.
+private func agentProgram(_ plist: URL) -> String? {
+    guard let data = try? Data(contentsOf: plist),
+          let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+          let arguments = dict["ProgramArguments"] as? [String] else { return nil }
+    return arguments.first
 }
 
 struct VersionCommand: Command {
