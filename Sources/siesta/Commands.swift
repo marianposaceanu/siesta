@@ -155,12 +155,15 @@ struct InstallCommand: Command {
     }
 
     private func installedProgram(fallback destination: URL) throws -> URL {
-        let source = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
-        guard source.path.contains("/.build/") else { return source }
+        let invoked = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).standardizedFileURL
+        let real = invoked.resolvingSymlinksInPath()
+        // An installed binary is used by the path it was invoked through, so a Homebrew symlink such as
+        // /opt/homebrew/bin/siesta keeps working after an upgrade replaces the Cellar directory behind it.
+        guard real.path.contains("/.build/") else { return invoked }
         let fm = FileManager.default
         try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-        try fm.copyItem(at: source, to: destination)
+        try fm.copyItem(at: real, to: destination)
         return destination
     }
 }
