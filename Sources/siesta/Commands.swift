@@ -128,16 +128,18 @@ struct PauseCommand: Command {
     }
 }
 
-/// Copies this binary to ~/.local/bin, writes the config if absent, resets the idle clocks, writes the plist, loads the agent.
+/// Writes the config if absent, resets the idle clocks, writes the plist and loads the agent. A binary that
+/// came from a package build is copied to ~/.local/bin first; an installed one, Homebrew's for example, is used where it is.
 struct InstallCommand: Command {
     static let name = "install"
     static let usage = "install"
-    static let summary = "install the binary and load the hourly agent"
+    static let summary = "load the hourly agent for this binary"
 
     func run(_ context: Context, _ args: Arguments) throws {
         let paths = context.paths, out = context.output
         try paths.ensureDirectories()
-        if try installBinary(to: paths.installedBinary) { out.row("binary", paths.installedBinary.path) }
+        let program = try installedProgram(fallback: paths.installedBinary)
+        out.row("binary", program.path)
         if !FileManager.default.fileExists(atPath: paths.configFile.path) {
             try Config().save(to: paths.configFile)
             out.row("config", "\(paths.configFile.path) (written with defaults)")
@@ -145,20 +147,21 @@ struct InstallCommand: Command {
         var state = context.store.load()
         state.resetIdleClocks()   // the RunAtLoad check must never stop anything on the spot
         try context.store.save(state)
-        try context.agent.writePlist(config: context.config)
+        try context.agent.writePlist(config: context.config, program: program)
         out.row("plist", paths.agentPlist.path)
         try context.agent.load()
         out.row("agent", "loaded in \(context.agent.domain), `siesta check` every \(context.config.checkIntervalSeconds) s")
         out.row("log", paths.logFile.path)
     }
 
-    private func installBinary(to destination: URL) throws -> Bool {
+    private func installedProgram(fallback destination: URL) throws -> URL {
         let source = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
-        guard source.path != destination.path else { return false }
+        guard source.path.contains("/.build/") else { return source }
         let fm = FileManager.default
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
         try fm.copyItem(at: source, to: destination)
-        return true
+        return destination
     }
 }
 

@@ -22,10 +22,12 @@ public struct LaunchAgent: Sendable {
     public var domain: String { "gui/\(getuid())" }
     public var target: String { "\(domain)/\(Paths.label)" }
 
-    public func plist(config: Config) -> [String: Any] {
+    /// `program` is the binary launchd runs: a Homebrew or other installed copy as is, a package build
+    /// copied to ~/.local/bin first.
+    public func plist(config: Config, program: URL? = nil) -> [String: Any] {
         [
             "Label": Paths.label,
-            "ProgramArguments": [paths.installedBinary.path, "check"],
+            "ProgramArguments": [(program ?? paths.installedBinary).path, "check"],
             "StartInterval": config.checkIntervalSeconds,
             "RunAtLoad": true,
             "ProcessType": "Background",
@@ -38,8 +40,8 @@ public struct LaunchAgent: Sendable {
         ]
     }
 
-    public func writePlist(config: Config) throws {
-        let data = try PropertyListSerialization.data(fromPropertyList: plist(config: config), format: .xml, options: 0)
+    public func writePlist(config: Config, program: URL? = nil) throws {
+        let data = try PropertyListSerialization.data(fromPropertyList: plist(config: config, program: program), format: .xml, options: 0)
         try data.write(to: paths.agentPlist, options: .atomic)
     }
 

@@ -25,11 +25,19 @@ make test           # swift run selftest
 make install        # copies to ~/.local/bin/siesta, writes the plist, loads the agent
 ```
 
+Or from the tap:
+
+```sh
+brew tap marianposaceanu/tap
+brew install siesta
+siesta install     # loads the agent for the Homebrew binary
+```
+
 `make install` is `siesta install`, which does three things:
 
 | What | Where |
 | --- | --- |
-| binary | `~/.local/bin/siesta` |
+| binary | the one `siesta install` ran from; a package build is copied to `~/.local/bin/siesta` first |
 | config, written once with defaults | `~/.config/siesta/config.json` |
 | launchd agent | `~/Library/LaunchAgents/com.marianposaceanu.siesta.plist`, loaded into `gui/<uid>` |
 
