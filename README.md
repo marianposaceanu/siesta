@@ -97,6 +97,10 @@ The agent also appears in System Settings > General > Login Items & Extensions u
 
 An empty `profiles` list means every profile `colima list` reports. Changing `checkIntervalSeconds` needs `siesta install` again to rewrite the plist.
 
+## Releasing
+
+Commits follow Conventional Commits, and the version is derived from them: `make next-version` prints what the commits since the last tag justify (`feat` or a breaking change bumps the minor version while the project is 0.x, `fix` bumps the patch version, anything else does not release). `make release` runs the checks, updates the version constant and `CHANGELOG.md`, commits `chore(release): vX.Y.Z` and tags it.
+
 ## Layout
 
 ```
@@ -119,6 +123,7 @@ Sources/siesta
   Commands        one small type per subcommand
   Context         what every command gets
   Arguments       flags, options and positionals, no dependency
+scripts/release.sh  next version from the commits, changelog, release commit and tag
 Sources/selftest  drives Policy, Checker (against a fake backend and an in-memory store), State, Config, Format, LaunchAgent and Shell;
                   runs on a bare Command Line Tools install, which has neither XCTest nor the swift-testing macros
 ```

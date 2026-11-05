@@ -1,7 +1,7 @@
 PREFIX ?= $(HOME)/.local
 BIN    := .build/release/siesta
 
-.PHONY: build test install uninstall clean
+.PHONY: build test install uninstall clean next-version release
 
 build:
 	swift build -c release
@@ -17,3 +17,9 @@ uninstall:
 
 clean:
 	rm -rf .build
+
+next-version:
+	scripts/release.sh next
+
+release: test
+	scripts/release.sh
